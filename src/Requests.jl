@@ -3,7 +3,6 @@ Collection of utilities for working with Requests data
 """
 module Requests
 
-import Revise
 import Genie, Genie.Router, Genie.Input
 import HTTP, Reexport
 

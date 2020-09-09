@@ -3,8 +3,6 @@ Loads dependencies and bootstraps a Genie app. Exposes core Genie functionality.
 """
 module Genie
 
-import Revise
-
 push!(LOAD_PATH, @__DIR__)
 
 include("Configuration.jl")
@@ -180,8 +178,6 @@ julia> Genie.loadapp(".")
 ```
 """
 function loadapp(path::String = "."; autostart::Bool = false) :: Nothing
-  Core.eval(Main, :(import Revise))
-
   try
     Core.eval(Main, quote
         include(joinpath($path, $(Genie.BOOTSTRAP_FILE_NAME)))
@@ -190,10 +186,8 @@ function loadapp(path::String = "."; autostart::Bool = false) :: Nothing
     rethrow(ex)
   end
 
-  Core.eval(Main, :(Revise.revise()))
   Core.eval(Main, :(using Genie))
 
-  Core.eval(Main.UserApp, :(Revise.revise()))
   Core.eval(Main.UserApp, :($autostart && up()))
 
   nothing

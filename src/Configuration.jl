@@ -3,8 +3,6 @@ Core genie configuration / settings functionality.
 """
 module Configuration
 
-using Revise
-
 """
   const GENIE_VERSION
 
