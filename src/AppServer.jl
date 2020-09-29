@@ -57,9 +57,7 @@ function startup(port::Int, host::String = Genie.config.server_host;
 
   protocol = (ssl_config !== nothing && Genie.config.ssl_enabled) ? "https" : "http"
 
-  if Genie.config.websockets_server
-    port == ws_port && error("Genie does not yet support HTTP/S and WS/S on the same port.")
-
+  if Genie.config.websockets_server && port != ws_port
     SERVERS.websockets = @async HTTP.listen(host, ws_port; verbose = verbose, rate_limit = ratelimit, server = wsserver, sslconfig = ssl_config, http_kwargs...) do http::HTTP.Stream
       if HTTP.WebSockets.is_upgrade(http.message)
         HTTP.WebSockets.upgrade(http) do ws
@@ -73,7 +71,7 @@ function startup(port::Int, host::String = Genie.config.server_host;
 
   command = () -> begin
   HTTP.listen(parse(Sockets.IPAddr, host), port; verbose = verbose, rate_limit = ratelimit, server = server, sslconfig = ssl_config, http_kwargs...) do req
-      if Genie.config.websockets_server && HTTP.WebSockets.is_upgrade(req.message)
+      if Genie.config.websockets_server && (port == ws_port) && HTTP.WebSockets.is_upgrade(req.message)
         HTTP.WebSockets.upgrade(req) do ws
           setup_ws_handler(req.message, ws)
         end
