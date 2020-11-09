@@ -3,7 +3,7 @@ Loads dependencies and bootstraps a Genie app. Exposes core Genie functionality.
 """
 module Genie
 
-import Revise
+# import Revise
 
 push!(LOAD_PATH, @__DIR__)
 

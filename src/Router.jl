@@ -4,7 +4,7 @@ the appropiate route handler function.
 """
 module Router
 
-import Revise
+# import Revise
 import Reexport, Logging
 import HTTP, URIParser, HttpCommon, Sockets, Millboard, Dates, OrderedCollections, JSON
 import Genie
@@ -141,7 +141,7 @@ function route_request(req::HTTP.Request, res::HTTP.Response, ip::Sockets.IPv4 =
     return error(req.target, response_mime(), Val(404))
   end
 
-  Genie.Configuration.isdev() && Revise.revise()
+  # Genie.Configuration.isdev() && Revise.revise()
 
   for f in unique(pre_match_hooks)
     req, res, params.collection = f(req, res, params.collection)
@@ -179,7 +179,7 @@ function route_ws_request(req, msg::String, ws_client, ip::Sockets.IPv4 = Socket
 
   extract_get_params(URIParser.URI(req.target), params)
 
-  Genie.Configuration.isdev() && Revise.revise()
+  # Genie.Configuration.isdev() && Revise.revise()
 
   match_channels(req, msg, ws_client, params)
 end

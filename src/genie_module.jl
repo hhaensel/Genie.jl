@@ -132,11 +132,10 @@ end
     load_configurations(root_dir::String = Genie.config.path_config; context::Union{Module,Nothing} = nothing) :: Nothing
 
 Loads (includes) the framework's configuration files into the app's module `context`.
-The files are set up with `Revise` to be automatically reloaded.
 """
 function load_configurations(root_dir::String = Genie.config.path_config; context::Union{Module,Nothing} = nothing) :: Nothing
   secrets_path = joinpath(root_dir, Genie.SECRETS_FILE_NAME)
-  isfile(secrets_path) && Revise.includet(default_context(context), secrets_path)
+  isfile(secrets_path) && Core.eval(default_context(context), :(include(secrets_path)))
 
   nothing
 end
@@ -146,7 +145,6 @@ end
     load_initializers(root_dir::String = Genie.config.path_config; context::Union{Module,Nothing} = nothing) :: Nothing
 
 Loads (includes) the framework's initializers.
-The files are set up with `Revise` to be automatically reloaded.
 """
 function load_initializers(root_dir::String = Genie.config.path_config; context::Union{Module,Nothing} = nothing) :: Nothing
   dir = joinpath(root_dir, Genie.config.initializers_folder)
@@ -155,7 +153,7 @@ function load_initializers(root_dir::String = Genie.config.path_config; context:
 
   Threads.@threads for i in readdir(dir)
     fi = joinpath(dir, i)
-    endswith(fi, ".jl") && Revise.includet(default_context(context), fi)
+    endswith(fi, ".jl") && Core.eval(default_context(context), :(include(fi)))
   end
 
   nothing
@@ -172,7 +170,7 @@ function load_plugins(root_dir::String = Genie.config.path_plugins; context::Uni
 
   Threads.@threads for i in readdir(root_dir)
     fi = joinpath(root_dir, i)
-    endswith(fi, ".jl") && Revise.includet(default_context(context), fi)
+    endswith(fi, ".jl") && Core.eval(default_context(context), :(include(fi)))
   end
 
   nothing
@@ -185,7 +183,7 @@ end
 Loads the routes file.
 """
 function load_routes_definitions(routes_file::String = Genie.ROUTES_FILE_NAME; context::Union{Module,Nothing} = nothing, additional_routes_file::String = Genie.APP_FILE_NAME) :: Nothing
-  isfile(routes_file) && Revise.includet(default_context(context), routes_file)
+  isfile(routes_file) && Core.eval(default_context(context), :(include(routes_file)))
 
   nothing
 end
@@ -242,7 +240,7 @@ Main entry point to loading a Genie app.
 function load(; context::Union{Module,Nothing} = nothing) :: Nothing
   context = default_context(context)
 
-  Genie.Configuration.isdev() && Core.eval(context, :(__revise_mode__ = :eval))
+  # Genie.Configuration.isdev() && Core.eval(context, :(__revise_mode__ = :eval))
 
   App.bootstrap(context)
 
