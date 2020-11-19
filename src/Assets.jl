@@ -72,7 +72,9 @@ function js_settings(channel::String = Genie.config.webchannels_default_route) :
   ))
 
   """
-  window.Genie = {};
+  if (typeof(window.Genie) == 'undefined') {
+    window.Genie = {}
+  }
   Genie.Settings = $settings
   """
 end
