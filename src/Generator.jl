@@ -119,26 +119,32 @@ function write_resource_file(resource_path::String, file_name::String, resource_
 end
 
 
+function binfolderpath(path::String) :: String
+  bin_folder_path = joinpath(path, Genie.config.path_bin)
+  isdir(bin_folder_path) || mkpath(bin_folder_path)
+
+  bin_folder_path
+end
+
+
 """
     setup_windows_bin_files(path::String = ".") :: Nothing
 
 Creates the bin/server and bin/repl binaries for Windows
 """
 function setup_windows_bin_files(path::String = ".") :: Nothing
-  open(joinpath(path, Genie.config.path_bin, "repl.bat"), "w") do f
-    write(f, "\"$JULIA_PATH\" --color=yes --depwarn=no -q -i -- ../$(Genie.BOOTSTRAP_FILE_NAME) %*")
+  bin_folder_path = binfolderpath(path)
+
+  open(joinpath(bin_folder_path, "repl.bat"), "w") do f
+    write(f, "\"$JULIA_PATH\" --color=yes --depwarn=no --project=@. -q -i -- \"%~dp0..\\$(Genie.BOOTSTRAP_FILE_NAME)\" %*")
   end
 
-  open(joinpath(path, Genie.config.path_bin, "server.bat"), "w") do f
-    write(f, "\"$JULIA_PATH\" --color=yes --depwarn=no -q -i -- ../$(Genie.BOOTSTRAP_FILE_NAME) s %*")
+  open(joinpath(bin_folder_path, "server.bat"), "w") do f
+    write(f, "\"$JULIA_PATH\" --color=yes --depwarn=no --project=@. -q -i -- \"%~dp0..\\$(Genie.BOOTSTRAP_FILE_NAME)\" s %*")
   end
 
-  open(joinpath(path, Genie.config.path_bin, "serverinteractive.bat"), "w") do f
-    write(f, "\"$JULIA_PATH\" --color=yes --depwarn=no -q -i -- ../$(Genie.BOOTSTRAP_FILE_NAME) si %*")
-  end
-
-  open(joinpath(path, Genie.config.path_bin, "runtask.bat"), "w") do f
-    write(f, "\"$JULIA_PATH\" --color=yes --depwarn=no -q -- ../$(Genie.BOOTSTRAP_FILE_NAME) -r %*")
+  open(joinpath(bin_folder_path, "runtask.bat"), "w") do f
+    write(f, "\"$JULIA_PATH\" --color=yes --depwarn=no --project=@. -q -- \"%~dp0..\\$(Genie.BOOTSTRAP_FILE_NAME)\" -r %*")
   end
 
   nothing
@@ -146,13 +152,28 @@ end
 
 
 """
-    setup_nix_bin_files(app_path::String = ".") :: Nothing
+    setup_nix_bin_files(path::String = ".") :: Nothing
 
 Creates the bin/server and bin/repl binaries for *nix systems
 """
-function setup_nix_bin_files(app_path::String = ".") :: Nothing
-  chmod(joinpath(app_path, Genie.config.path_bin, "server"), 0o700)
-  chmod(joinpath(app_path, Genie.config.path_bin, "repl"), 0o700)
+function setup_nix_bin_files(path::String = ".") :: Nothing
+  bin_folder_path = binfolderpath(path)
+
+  open(joinpath(bin_folder_path, "repl"), "w") do f
+    write(f, "#!/bin/sh\n" * raw"julia --color=yes --depwarn=no --project=@. -q -L $(dirname $0)/../bootstrap.jl -- \"$@\"")
+  end
+
+  open(joinpath(bin_folder_path, "server"), "w") do f
+    write(f, "#!/bin/sh\n" * raw"julia --color=yes --depwarn=no --project=@. -q -i -- $(dirname $0)/../bootstrap.jl s \"$@\"")
+  end
+
+  open(joinpath(bin_folder_path, "runtask"), "w") do f
+    write(f, "#!/bin/sh\n" * raw"julia --color=yes --depwarn=no --project=@. -q -- $(dirname $0)/../bootstrap.jl -r \"$@\"")
+  end
+
+  chmod(joinpath(bin_folder_path, "server"), 0o700)
+  chmod(joinpath(bin_folder_path, "repl"), 0o700)
+  chmod(joinpath(bin_folder_path, "runtask"), 0o700)
 
   nothing
 end
@@ -187,7 +208,7 @@ end
 """
     secret_token() :: String
 
-Generates a random secret token to be used for configuring the SECRET_TOKEN const.
+Generates a random secret token to be used for configuring the call to `Genie.secret_token!`.
 """
 function secret_token() :: String
   SHA.sha256("$(randn()) $(Dates.now())") |> bytes2hex
@@ -195,17 +216,50 @@ end
 
 
 """
-Generates a valid secrets.jl file with a random SECRET_TOKEN.
+    write_secrets_file(app_path=".")
+
+Generates a valid `config/secrets.jl` file with a random secret token.
 """
 function write_secrets_file(app_path::String = ".") :: Nothing
   secrets_path = joinpath(app_path, Genie.config.path_config)
   ispath(secrets_path) || mkpath(secrets_path)
 
   open(joinpath(secrets_path, Genie.SECRETS_FILE_NAME), "w") do f
-    write(f, """const SECRET_TOKEN = "$(secret_token())" """)
+    write(f, """Genie.secret_token!("$(secret_token())") """)
   end
 
   nothing
+end
+
+"""
+    migrate_secrets_file(app_path=".")
+
+Replace the previous content of `config/secrets.jl` with the new syntax but the same token.
+
+Specifically, the previous syntax of the file is the following, which is now deprecated:
+
+    const SECRET_TOKEN = "token"
+
+This syntax is replaced by the new syntax:
+
+    Genie.secret_token!("token")
+"""
+function migrate_secrets_file(app_path::String = ".") :: Nothing
+  secrets_path = joinpath(app_path, Genie.config.path_config, Genie.SECRETS_FILE_NAME)
+  if isfile(secrets_path)
+    match_deprecated = match(r"SECRET_TOKEN\s*=\s*\"(.*)\"", readline(secrets_path))
+    if match_deprecated != nothing # does the file use the deprecated syntax?
+      open(secrets_path, "w") do f
+        write(f, """Genie.secret_token!("$(match_deprecated.captures[1])") """)
+      end # replace the previous content of the file
+      @info "Successfully migrated $(secrets_path) to a valid syntax."
+    else
+      error("No migration possible; $(secrets_path) is not using a migrate-able syntax.")
+    end
+  else
+    error("No migration possible; $(secrets_path) is not a file.")
+  end
+  return nothing
 end
 
 
@@ -234,7 +288,7 @@ function new(app_name::String, app_path::String = "", autostart::Bool = true) ::
 
   scaffold(app_name, app_path)
 
-  post_create(app_path, autostart = autostart)
+  post_create(app_name, app_path, autostart = autostart)
 
   nothing
 end
@@ -303,7 +357,7 @@ end
 Writes files used for interacting with the SearchLight ORM.
 """
 function db_support(app_path::String = ".") :: Nothing
-  cp(joinpath(@__DIR__, "..", Genie.NEW_APP_PATH, Genie.config.path_db), joinpath(app_path, Genie.config.path_db))
+  cp(joinpath(@__DIR__, "..", Genie.NEW_APP_PATH, Genie.config.path_db), joinpath(app_path, Genie.config.path_db), force = true)
 
   initializer_path = joinpath(app_path, Genie.config.path_initializers, Genie.SEARCHLIGHT_INITIALIZER_FILE_NAME)
   isfile(initializer_path) || cp(joinpath(@__DIR__, "..", Genie.NEW_APP_PATH, Genie.config.path_initializers, Genie.SEARCHLIGHT_INITIALIZER_FILE_NAME), initializer_path)
@@ -327,14 +381,19 @@ function write_app_custom_files(path::String, app_path::String) :: Nothing
   open(joinpath(app_path, Genie.BOOTSTRAP_FILE_NAME), "w") do f
     write(f,
     """
-      cd(@__DIR__)
-      import Pkg
-      Pkg.activate(".")
-
-      function main()
-        include(joinpath("$(Genie.config.path_src)", "$(moduleinfo[1]).jl"))
-      end; main()
+    using $(moduleinfo[1])
+    $(moduleinfo[1]).main()
     """)
+  end
+
+  isdir(joinpath(app_path, "test")) || mkpath(joinpath(app_path, "test"))
+  open(joinpath(app_path, "test", "runtests.jl"), "w") do f
+    write(f,
+      """
+      using $(moduleinfo[1]), Test
+      # implement your tests here
+      @test 1 == 1
+      """)
   end
 
   nothing
@@ -346,13 +405,84 @@ end
 
 Installs the application's dependencies using Julia's Pkg
 """
-function install_app_dependencies(app_path::String = "."; testmode::Bool = false) :: Nothing
+function install_app_dependencies(app_path::String = "."; testmode::Bool = false, dbsupport::Bool = false) :: Nothing
   @info "Installing app dependencies"
   Pkg.activate(".")
 
-  testmode ? Pkg.develop("Genie") : Pkg.add("Genie")
-  Pkg.add("LoggingExtras")
-  Pkg.add("MbedTLS")
+  pkgs = ["Dates", "Logging", "LoggingExtras", "MbedTLS"]
+
+  testmode ? Pkg.develop("Genie") : push!(pkgs, "Genie")
+
+  Pkg.add(pkgs)
+
+  if dbsupport
+    try
+      Pkg.add("SearchLight")
+      testmode || install_searchlight_dependencies()
+    catch ex
+      @error ex
+    end
+  end
+
+  @info "Installing dependencies for unit tests"
+
+  Pkg.activate("test")
+
+  Pkg.add("Test")
+
+  Pkg.activate(".") # return to the main project
+
+  nothing
+end
+
+
+"""
+    generate_project(name)
+
+Generate the `Project.toml` with a name and a uuid.
+If this file already exists, generate `Project_sample.toml` as a reference instead.
+"""
+function generate_project(name::String) :: Nothing
+  name = Genie.FileTemplates.appmodule(name)[1] # convert to camel case
+
+  mktempdir() do tmpdir
+    tmp = joinpath(tmpdir, name, "Project.toml")
+
+    Pkg.project(Pkg.API.Context(), name, tmpdir) # generate tmp
+
+    if !isfile("Project.toml")
+      mv(tmp, "Project.toml") # move tmp here
+      @info "Project.toml has been generated"
+    else
+      mv(tmp, "Project_sample.toml"; force = true)
+      @warn "$(abspath("."))/Project.toml already exists and will not be replaced. " *
+        "Make sure that it specifies a name and a uuid, using Project_sample.toml as a reference."
+    end
+  end # remove tmpdir on completion
+
+  nothing
+end
+
+
+function install_searchlight_dependencies() :: Nothing # TODO: move this to SearchLight post install
+  backends = ["SQLite", "MySQL", "PostgreSQL"]
+
+  println("Please choose the DB backend you want to use: ")
+  for i in 1:length(backends)
+    println("$i. $(backends[i])")
+  end
+  println("Input $(join([1:length(backends)...], ", ", " or ")) and press ENTER to confirm")
+  println()
+
+  choice = try
+    parse(Int, readline())
+  catch _
+    0
+  end
+
+  (choice in [1, 2, 3]) || return install_searchlight_dependencies()
+
+  Pkg.add("SearchLight$(backends[choice])")
 
   nothing
 end
@@ -446,7 +576,7 @@ function newapp(app_name::String; autostart::Bool = true, fullstack::Bool = fals
 
   fullstack ? fullstack_app(app_name, app_path) : microstack_app(app_name, app_path)
 
-  dbsupport ? (fullstack || db_support(app_path)) : remove_searchlight_initializer(app_path)
+  (dbsupport || fullstack) ? db_support(app_path) : remove_searchlight_initializer(app_path)
 
   mvcsupport && (fullstack || mvc_support(app_path))
 
@@ -464,21 +594,38 @@ function newapp(app_name::String; autostart::Bool = true, fullstack::Bool = fals
     @error ex
   end
 
-  post_create(app_path, autostart = autostart)
+  post_create(app_name, app_path; autostart = autostart, testmode = testmode, dbsupport = (dbsupport || fullstack))
 
   nothing
 end
 
 
-function post_create(app_path::String; autostart::Bool = true, testmode::Bool = false)
+function post_create(app_name::String, app_path::String; autostart::Bool = true, testmode::Bool = false, dbsupport::Bool = false)
   @info "Done! New app created at $app_path"
 
   @info "Changing active directory to $app_path"
   cd(app_path)
 
-  install_app_dependencies(app_path, testmode = testmode)
+  generate_project(app_name)
+
+  install_app_dependencies(app_path, testmode = testmode, dbsupport = dbsupport)
+
+  set_files_mod()
 
   autostart_app(app_path, autostart = autostart)
+
+  nothing
+end
+
+
+function set_files_mod() :: Nothing
+  for f in ["Manifest.toml", "Project.toml", "routes.jl"]
+    try
+      chmod(f, 0o700)
+    catch _
+      @warn "Can't change mod for $f. File might be read-only."
+    end
+  end
 
   nothing
 end

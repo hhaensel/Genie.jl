@@ -12,9 +12,9 @@ import Genie
 include("mimetypes.jl")
 
 export route, routes, channel, channels, serve_static_file
-export GET, POST, PUT, PATCH, DELETE, OPTIONS
+export GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD
 export tolink, linkto, responsetype, toroute
-export @params, @routes, @channels
+export @params, @routes, @channels, @query, @post, @headers, @request
 
 Reexport.@reexport using HttpCommon
 
@@ -24,6 +24,7 @@ const PUT     = "PUT"
 const PATCH   = "PATCH"
 const DELETE  = "DELETE"
 const OPTIONS = "OPTIONS"
+const HEAD    = "HEAD"
 
 const BEFORE_HOOK  = :before
 const AFTER_HOOK   = :after
@@ -112,6 +113,9 @@ end
 function _params_(key::Union{String,Symbol})
   task_local_storage(:__params)[key]
 end
+function _params_(key::Union{String,Symbol}, value::Any)
+  task_local_storage(:__params)[key] = value
+end
 
 
 """
@@ -162,6 +166,8 @@ function route_request(req::HTTP.Request, res::HTTP.Response, ip::Sockets.IPv4 =
   else
     @error reqstatus
   end
+
+  req.method == HEAD && (res.body = UInt8[])
 
   res
 end
@@ -657,6 +663,8 @@ function parse_channel(channel::String) :: Tuple{String,Vector{String},Vector{An
   "/" * join(parts, "/"), param_names, param_types
 end
 
+parse_param(param_type::Type{<:Number}, param::AbstractString) = parse(param_type, param)
+parse_param(param_type::Type{T}, param::S) where {T, S} = convert(param_type, param)
 
 """
     extract_uri_params(uri::String, regex_route::Regex, param_names::Vector{String}, param_types::Vector{Any}, params::Params) :: Bool
@@ -669,10 +677,10 @@ function extract_uri_params(uri::String, regex_route::Regex, param_names::Vector
   i = 1
   for param_name in param_names
     try
-      params.collection[Symbol(param_name)] = parse(param_types[i], matches[param_name])
-    catch ex
-      @error "Failed to match URI params between $(param_types[i])::$(typeof(param_types[i])) and $(matches[param_name])::$(typeof(matches[param_name]))"
-      @error ex
+      params.collection[Symbol(param_name)] = parse_param(param_types[i], matches[param_name])
+    catch _
+      # @error "Failed to match URI params between $(param_types[i])::$(typeof(param_types[i])) and $(matches[param_name])::$(typeof(matches[param_name]))"
+      # @error ex
 
       return false
     end
@@ -698,7 +706,18 @@ function extract_get_params(uri::URIParser.URI, params::Params) :: Bool
 
       k = Symbol(URIParser.unescape(qp[1]))
       v = URIParser.unescape(qp[2])
-      params.collection[k] = params.collection[Genie.PARAMS_GET_KEY][k] = v
+
+      # collect values like x[] in an array
+      if endswith(string(k), "[]") && haskey(params.collection, k)
+        if isa(params.collection, Vector)
+          push!(params.collection[k], v)
+          params.collection[Genie.PARAMS_GET_KEY][k] = params.collection[k]
+        else
+          params.collection[k] = params.collection[Genie.PARAMS_GET_KEY][k] = [params.collection[k], v]
+        end
+      else
+        params.collection[k] = params.collection[Genie.PARAMS_GET_KEY][k] = v
+      end
     end
   end
 
@@ -874,11 +893,15 @@ to_response(action_result::Any)::HTTP.Response = HTTP.Response(string(action_res
 """
     @params
 
-The object containing the request variables collection.
+The collection containing the request variables collection.
 """
 macro params()
   quote
-    task_local_storage(:__params)
+    try
+      task_local_storage(:__params)
+    catch _
+      Dict()
+    end
   end
 end
 macro params(key)
@@ -892,12 +915,70 @@ end
 
 
 """
+    @query
+
+The collection containing the query request variables collection (GET params).
+"""
+macro query()
+  quote
+    try
+      @params(Genie.PARAMS_GET_KEY)
+    catch _
+      Dict()
+    end
+  end
+end
+macro query(key)
+  :((@query)[$key])
+end
+macro query(key, default)
+  quote
+    haskey(@query, $key) ? @query($key) : $default
+  end
+end
+
+
+"""
+    @post
+
+The collection containing the POST request variables collection.
+"""
+macro post()
+  quote
+    try
+      @params(Genie.PARAMS_POST_KEY)
+    catch _
+      Dict()
+    end
+  end
+end
+macro post(key)
+  :((@post)[$key])
+end
+macro post(key, default)
+  quote
+    haskey(@post, $key) ? @post($key) : $default
+  end
+end
+
+
+"""
     @request()
 
 The request object.
 """
 macro request()
   :(_params_(Genie.PARAMS_REQUEST_KEY))
+end
+
+
+"""
+    @headers()
+
+The current request's headers (as a Dict)
+"""
+macro headers()
+  Dict{String,String}(@request().headers)
 end
 
 

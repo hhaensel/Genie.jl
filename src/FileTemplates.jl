@@ -68,16 +68,16 @@ function appmodule(path::String)
   content = """
   module $appname
 
-  using Logging, LoggingExtras
+  using Genie, Logging, LoggingExtras
 
   function main()
     Base.eval(Main, :(const UserApp = $appname))
 
-    include(joinpath("..", "genie.jl"))
+    Genie.genie(; context = @__MODULE__)
 
     Base.eval(Main, :(const Genie = $appname.Genie))
     Base.eval(Main, :(using Genie))
-  end; main()
+  end
 
   end
   """
@@ -113,7 +113,6 @@ function dockerfile(; user::String = "genie", supervisor::Bool = false, nginx::B
 
   RUN chmod +x bin/repl
   RUN chmod +x bin/server
-  RUN chmod +x bin/serverinteractive
   RUN chmod +x bin/runtask
 
   USER $user

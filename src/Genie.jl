@@ -51,9 +51,8 @@ include("Cache.jl")
 config.cache_storage == :File && include("cache_adapters/FileCache.jl")
 
 include("Sessions.jl")
-config.session_storage == :File && include("session_adapters/FileSession.jl")
 
-export serve, up, down, loadapp
+export serve, up, down, loadapp, genie
 @reexport using .Router
 
 """
@@ -65,7 +64,7 @@ The `params` and `kwparams` arguments are forwarded to `Genie.startup()`.
 # Arguments
 - `path::String`: the folder of static files to be served by the server
 - `params`: additional arguments which are passed to `Genie.startup` to control the web server
-- `kwparams`: additionak keyword arguments which are passed to `Genie.startup` to control the web server
+- `kwparams`: additional keyword arguments which are passed to `Genie.startup` to control the web server
 
 # Examples
 ```julia-repl
@@ -232,5 +231,44 @@ function run(; server::Union{Sockets.TCPServer,Nothing} = nothing) :: Nothing
 
   nothing
 end
+
+
+"""
+    genie() :: Nothing
+
+Formerly, this has been `genie.jl` in an app's base directory.
+"""
+function genie(; context = @__MODULE__) :: Nothing
+  haskey(ENV, "GENIE_ENV") || (ENV["GENIE_ENV"] = "dev")
+
+  if !haskey(ENV, "HOST")
+    ENV["HOST"] = (ENV["GENIE_ENV"] == "dev") ? "127.0.0.1" : "0.0.0.0"
+  end
+
+  ### EARLY BIND TO PORT FOR HOSTS WITH TIMEOUT ###
+  EARLYBINDING = if haskey(ENV, "EARLYBIND") && lowercase(ENV["EARLYBIND"]) == "true" && haskey(ENV, "PORT")
+    printstyled("\nEarly binding to host $(ENV["HOST"]) and port $(ENV["PORT"]) \n", color = :light_blue, bold = true)
+    try
+      Sockets.listen(parse(Sockets.IPAddr, ENV["HOST"]), parse(Int, ENV["PORT"]))
+    catch ex
+      @show ex
+
+      printstyled("\nFailed early binding!\n", color = :red, bold = true)
+      nothing
+    end
+  else
+    nothing
+  end
+
+  ### OFF WE GO! ###
+  ROOT_PATH = pwd()
+  push!(LOAD_PATH, ROOT_PATH, "src")
+
+  load(context = context)
+  run(server = EARLYBINDING)
+
+  nothing
+end
+
 
 end
