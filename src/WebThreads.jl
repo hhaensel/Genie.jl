@@ -1,24 +1,24 @@
 """
-Handles WebSockets communication logic.
+Handles Ajax communication logic.
 """
-module WebChannels
+module WebThreads
 
-import HTTP, Distributed, Logging
+import HTTP, Distributed, Logging, Dates
 import Genie, Genie.Renderer
 
-const ClientId = UInt # web socket hash
+
+const MESSAGE_QUEUE = Dict{UInt,Vector{String}}()
+
+const ClientId = UInt # session id
 const ChannelName = String
 
-struct ChannelNotFoundException <: Exception
-  name::ChannelName
-end
-
 mutable struct ChannelClient
-  client::HTTP.WebSockets.WebSocket
+  client::UInt
   channels::Vector{ChannelName}
+  last_active::Dates.DateTime
 end
 
-const ChannelClientsCollection = Dict{ClientId,ChannelClient} # { id(ws) => { :client => ws, :channels => ["foo", "bar", "baz"] } }
+const ChannelClientsCollection = Dict{ClientId,ChannelClient} # { uint => { :client => ws, :channels => ["foo", "bar", "baz"] } }
 const ChannelSubscriptionsCollection = Dict{ChannelName,Vector{ClientId}}  # { "foo" => ["4", "12"] }
 const MessagePayload = Union{Nothing,Dict}
 
@@ -35,14 +35,14 @@ const SUBSCRIPTIONS = ChannelSubscriptionsCollection()
 
 clients() = collect(values(CLIENTS))
 subscriptions() = SUBSCRIPTIONS
-websockets() = map(c -> c.client, clients())
+webthreads() = map(c -> c.client, clients())
 channels() = collect(keys(SUBSCRIPTIONS))
 
 
 function connected_clients(channel::ChannelName) :: Vector{ChannelClient}
   clients = ChannelClient[]
   for client_id in SUBSCRIPTIONS[channel]
-    ! (CLIENTS[client_id].client.txclosed && CLIENTS[client_id].client.rxclosed) && push!(clients, CLIENTS[client_id])
+    ((Dates.now() - CLIENTS[client_id].last_active) <= Genie.config.webthreads_connection_threshold) && push!(clients, CLIENTS[client_id])
   end
 
   clients
@@ -60,7 +60,7 @@ end
 function disconnected_clients(channel::ChannelName) :: Vector{ChannelClient}
   clients = ChannelClient[]
   for client_id in SUBSCRIPTIONS[channel]
-    CLIENTS[client_id].client.txclosed && CLIENTS[client_id].client.rxclosed && push!(clients, CLIENTS[client_id])
+    ((Dates.now() - CLIENTS[client_id].last_active) > Genie.config.webthreads_connection_threshold) && push!(clients, CLIENTS[client_id])
   end
 
   clients
@@ -76,32 +76,29 @@ end
 
 
 """
-Subscribes a web socket client `ws` to `channel`.
+Subscribes a web thread client `wt` to `channel`.
 """
-function subscribe(ws::HTTP.WebSockets.WebSocket, channel::ChannelName) :: ChannelClientsCollection
-  if haskey(CLIENTS, id(ws))
-    in(channel, CLIENTS[id(ws)].channels) || push!(CLIENTS[id(ws)].channels, channel)
+function subscribe(wt::UInt, channel::ChannelName) :: ChannelClientsCollection
+  if haskey(CLIENTS, wt)
+    in(channel, CLIENTS[wt].channels) || push!(CLIENTS[wt].channels, channel)
   else
-    CLIENTS[id(ws)] = ChannelClient(ws, ChannelName[channel])
+    CLIENTS[wt] = ChannelClient(wt, ChannelName[channel], Dates.now())
   end
 
-  push_subscription(id(ws), channel)
+  push_subscription(wt, channel)
+
+  haskey(MESSAGE_QUEUE, wt) || (MESSAGE_QUEUE[wt] = String[])
 
   CLIENTS
 end
 
 
-function id(ws::HTTP.WebSockets.WebSocket) :: UInt
-  hash(ws)
-end
-
-
 """
-Unsubscribes a web socket client `ws` from `channel`.
+Unsubscribes a web socket client `wt` from `channel`.
 """
-function unsubscribe(ws::HTTP.WebSockets.WebSocket, channel::ChannelName) :: ChannelClientsCollection
-  haskey(CLIENTS, id(ws)) && deleteat!(CLIENTS[id(ws)].channels, CLIENTS[id(ws)].channels .== channel)
-  pop_subscription(id(ws), channel)
+function unsubscribe(wt::UInt, channel::ChannelName) :: ChannelClientsCollection
+  haskey(CLIENTS, wt) && deleteat!(CLIENTS[wt].channels, CLIENTS[wt].channels .== channel)
+  pop_subscription(wt, channel)
 
   CLIENTS
 end
@@ -111,21 +108,16 @@ end
 
 
 """
-Unsubscribes a web socket client `ws` from all the channels.
+Unsubscribes a web socket client `wt` from all the channels.
 """
-function unsubscribe_client(ws::HTTP.WebSockets.WebSocket) :: ChannelClientsCollection
-  if haskey(CLIENTS, id(ws))
-    for channel_id in CLIENTS[id(ws)].channels
-      pop_subscription(id(ws), channel_id)
+function unsubscribe_client(wt::UInt) :: ChannelClientsCollection
+  if haskey(CLIENTS, wt)
+    for channel_id in CLIENTS[wt].channels
+      pop_subscription(wt, channel_id)
     end
 
-    delete!(CLIENTS, id(ws))
+    delete!(CLIENTS, wt)
   end
-
-  CLIENTS
-end
-function unsubscribe_client(client_id::ClientId) :: ChannelClientsCollection
-  unsubscribe_client(CLIENTS[client_id].client)
 
   CLIENTS
 end
@@ -157,6 +149,19 @@ function unsubscribe_disconnected_clients(channel::ChannelName) :: ChannelClient
 end
 
 
+function unsubscribe_clients()
+  empty!(CLIENTS)
+  empty!(SUBSCRIPTIONS)
+end
+
+
+function timestamp_client(client_id::ClientId) :: Nothing
+  haskey(CLIENTS, client_id) && (CLIENTS[client_id].last_active = Dates.now())
+
+  nothing
+end
+
+
 """
 Adds a new subscription for `client` to `channel`.
 """
@@ -167,10 +172,12 @@ function push_subscription(client_id::ClientId, channel::ChannelName) :: Channel
     SUBSCRIPTIONS[channel] = ClientId[client_id]
   end
 
+  timestamp_client(client_id)
+
   SUBSCRIPTIONS
 end
 function push_subscription(channel_client::ChannelClient, channel::ChannelName) :: ChannelSubscriptionsCollection
-  push_subscription(id(channel_client.client), channel)
+  push_subscription(channel_client.client, channel)
 end
 
 
@@ -185,10 +192,12 @@ function pop_subscription(client::ClientId, channel::ChannelName) :: ChannelSubs
     isempty(SUBSCRIPTIONS[channel]) && delete!(SUBSCRIPTIONS, channel)
   end
 
+  timestamp_client(client)
+
   SUBSCRIPTIONS
 end
 function pop_subscription(channel_client::ChannelClient, channel::ChannelName) :: ChannelSubscriptionsCollection
-  pop_subscription(id(channel_client.client), channel)
+  pop_subscription(channel_client.client, channel)
 end
 
 
@@ -212,10 +221,10 @@ function broadcast(channels::Union{ChannelName,Vector{ChannelName}}, msg::String
   isa(channels, Array) || (channels = ChannelName[channels])
 
   for channel in channels
-    haskey(SUBSCRIPTIONS, channel) || throw(ChannelNotFoundException(channel))
+    haskey(SUBSCRIPTIONS, channel) || throw(Genie.WebChannels.ChannelNotFoundException(channel))
 
     for client in SUBSCRIPTIONS[channel]
-      except !== nothing && client == id(except) && continue
+      except !== nothing && client == except && continue
 
       try
         message(client, msg)
@@ -231,7 +240,7 @@ function broadcast(channels::Union{ChannelName,Vector{ChannelName}}, msg::String
   isa(channels, Array) || (channels = [channels])
 
   for channel in channels
-    haskey(SUBSCRIPTIONS, channel) || throw(ChannelNotFoundException(channel))
+    haskey(SUBSCRIPTIONS, channel) || throw(Genie.WebChannels.ChannelNotFoundException(channel))
 
     for client in SUBSCRIPTIONS[channel]
       try
@@ -267,16 +276,32 @@ end
 
 
 """
-Writes `msg` to web socket for `client`.
+Writes `msg` to message queue for `client`.
 """
-function message(ws::HTTP.WebSockets.WebSocket, msg::String) :: Int
-  write(ws, msg)
+function message(wt::UInt, msg::String)
+  push!(MESSAGE_QUEUE[wt], msg)
 end
-function message(client::ClientId, msg::String) :: Int
-  message(CLIENTS[client].client, msg)
-end
-function message(client::ChannelClient, msg::String) :: Int
+function message(client::ChannelClient, msg::String)
   message(client.client, msg)
+end
+
+
+function pull(wt::UInt, channel::ChannelName)
+  output = ""
+  if haskey(MESSAGE_QUEUE, wt) && ! isempty(MESSAGE_QUEUE[wt])
+    output = MESSAGE_QUEUE[wt] |> Renderer.Json.JSONParser.json
+    empty!(MESSAGE_QUEUE[wt])
+  end
+
+  timestamp_client(wt)
+
+  output
+end
+
+function push(wt::UInt, channel::ChannelName, message::String)
+  timestamp_client(wt)
+
+  Genie.Router.route_ws_request(Genie.Router.@params(Genie.PARAMS_REQUEST_KEY), message, wt)
 end
 
 end

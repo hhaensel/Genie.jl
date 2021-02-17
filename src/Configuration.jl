@@ -4,6 +4,7 @@ Core genie configuration / settings functionality.
 module Configuration
 
 import Pkg
+import Dates
 
 """
     pkginfo(pkg::String)
@@ -159,6 +160,7 @@ mutable struct Settings
 
   log_level::Logging.LogLevel
   log_to_file::Bool
+  log_requests::Bool
 
   assets_fingerprinted::Bool
 
@@ -193,6 +195,12 @@ mutable struct Settings
   webchannels_unsubscribe_channel::String
   webchannels_autosubscribe::Bool
 
+  webthreads_default_route::String
+  webthreads_js_file::String
+  webthreads_pull_route::String
+  webthreads_push_route::String
+  webthreads_connection_threshold::Dates.Millisecond
+
   html_parser_close_tag::String
   html_parser_char_at::String
   html_parser_char_dot::String
@@ -205,6 +213,8 @@ mutable struct Settings
   session_key_name::String
   session_storage::Union{Symbol,Nothing}
   session_options::Dict{String,Any}
+
+  base_path::String
 
   Settings(;
             server_port                 = (haskey(ENV, "PORT") ? parse(Int, ENV["PORT"]) : 8000), # default port for binding the web server
@@ -230,6 +240,7 @@ mutable struct Settings
 
             log_level     = Logging.Debug,
             log_to_file   = false,
+            log_requests  = true,
 
             assets_fingerprinted  = false,
 
@@ -264,6 +275,12 @@ mutable struct Settings
             webchannels_unsubscribe_channel = "unsubscribe",
             webchannels_autosubscribe       = true,
 
+            webthreads_default_route        = "__",
+            webthreads_js_file              = "webthreads.js",
+            webthreads_pull_route           = "pull",
+            webthreads_push_route           = "push",
+            webthreads_connection_threshold = Dates.Millisecond(60_000), # 1 minute
+
             html_parser_close_tag = " /",
             html_parser_char_at = "!!",
             html_parser_char_dot = "!",
@@ -275,7 +292,9 @@ mutable struct Settings
 
             session_key_name    = "__geniesid",
             session_storage     = nothing,
-            session_options     = Dict("Path" => "/", "HttpOnly" => true, "Secure" => ssl_enabled)
+            session_options     = Dict("Path" => "/", "HttpOnly" => true, "Secure" => ssl_enabled),
+
+            base_path = "/"
         ) =
               new(
                   server_port, server_host,
@@ -283,7 +302,7 @@ mutable struct Settings
                   app_env,
                   cors_headers, cors_allowed_origins,
                   cache_duration, cache_storage,
-                  log_level, log_to_file,
+                  log_level, log_to_file, log_requests,
                   assets_fingerprinted,
                   inflector_irregulars,
                   run_as_server,
@@ -292,9 +311,11 @@ mutable struct Settings
                   path_config, path_env, path_app, path_resources, path_lib, path_helpers, path_log, path_tasks, path_build,
                   path_plugins, path_cache, path_initializers, path_db, path_bin, path_src,
                   webchannels_default_route, webchannels_js_file, webchannels_subscribe_channel, webchannels_unsubscribe_channel, webchannels_autosubscribe,
+                  webthreads_default_route, webthreads_js_file, webthreads_pull_route, webthreads_push_route, webthreads_connection_threshold,
                   html_parser_close_tag, html_parser_char_at, html_parser_char_dot, html_parser_char_column, html_parser_char_dash,
                   ssl_enabled, ssl_config,
-                  session_key_name, session_storage, session_options
+                  session_key_name, session_storage, session_options,
+                  base_path
                 )
 end
 

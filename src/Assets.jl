@@ -3,11 +3,11 @@ Helper functions for working with frontend assets (including JS, CSS, etc files)
 """
 module Assets
 
-import Genie, Genie.Configuration, Genie.Router, Genie.WebChannels
+import Genie, Genie.Configuration, Genie.Router, Genie.WebChannels, Genie.WebThreads
 import Genie.Renderer.Json
 
 export include_asset, css_asset, js_asset, js_settings, css, js
-export embedded, channels_script, channels_support
+export embedded, channels_script, channels_support, webthreads_script, webthreads_support
 export favicon_support
 
 
@@ -27,7 +27,7 @@ function include_asset(asset_type::Union{String,Symbol}, file_name::Union{String
   file_name = string(file_name)
 
   suffix = fingerprinted ? "-" * Genie.ASSET_FINGERPRINT * ".$asset_type" : ".$asset_type"
-  "/$asset_type/$(file_name)$(suffix)"
+  "$(Genie.config.base_path)$(asset_type)/$(file_name)$(suffix)"
 end
 
 
@@ -69,6 +69,13 @@ function js_settings(channel::String = Genie.config.webchannels_default_route) :
     :webchannels_subscribe_channel    => Genie.config.webchannels_subscribe_channel,
     :webchannels_unsubscribe_channel  => Genie.config.webchannels_unsubscribe_channel,
     :webchannels_autosubscribe        => Genie.config.webchannels_autosubscribe,
+
+    :webthreads_default_route         => Genie.config.webthreads_default_route,
+    :webthreads_js_file               => Genie.config.webthreads_js_file,
+    :webthreads_pull_route            => Genie.config.webthreads_pull_route,
+    :webthreads_push_route            => Genie.config.webthreads_push_route,
+
+    :base_path                        => Genie.config.base_path,
   ))
 
   """
@@ -147,15 +154,102 @@ Provides full web channels support, setting up routes for loading support JS fil
 returning the `<script>` tag for including the linked JS file into the web page.
 """
 function channels_support(channel::String = Genie.config.webchannels_default_route) :: String
-  endpoint = channel == Genie.config.webchannels_default_route ? "/js/$(Genie.config.webchannels_js_file)" : "/js/$(channel)/$(Genie.config.webchannels_js_file)"
+  endpoint = (channel == Genie.config.webchannels_default_route) ?
+              "/js/$(Genie.config.webchannels_js_file)" :
+              "/js/$(channel)/$(Genie.config.webchannels_js_file)"
   Router.route(endpoint) do
     Genie.Renderer.Js.js(channels(channel))
   end
 
   channels_subscribe(channel)
 
-  "<script src=\"$(endpoint)?v=$(Genie.Configuration.GENIE_VERSION)\"></script>"
+  "<script src=\"$(Genie.config.base_path)$(endpoint[2:end])?v=$(Genie.Configuration.GENIE_VERSION)\"></script>"
 end
+
+
+########
+
+
+"""
+    webthreads() :: String
+
+Outputs the webthreads.js file included with the Genie package
+"""
+function webthreads(channel::String = Genie.config.webthreads_default_route) :: String
+  string(js_settings(channel),
+          embedded(joinpath("files", "embedded", "pollymer.min.js")),
+          embedded(joinpath("files", "embedded", "webthreads.js")))
+end
+
+
+"""
+    webthreads_script() :: String
+
+Outputs the channels JavaScript content within `<script>...</script>` tags, for embedding into the page.
+"""
+function webthreads_script(channel::String = Genie.config.webthreads_default_route) :: String
+"""
+<script>
+$(webthreads(channel))
+</script>
+"""
+end
+
+
+function webthreads_subscribe(channel::String = Genie.config.webthreads_default_route) :: Nothing
+  Router.route("/$(channel)/$(Genie.config.webchannels_subscribe_channel)", method = Router.GET) do
+    WebThreads.subscribe(Genie.Requests.wtclient(), channel)
+
+    Dict("Subscription" => "OK") |> Genie.Renderer.Json.json
+  end
+
+  Router.route("/$(channel)/$(Genie.config.webchannels_unsubscribe_channel)", method = Router.GET) do
+    WebThreads.unsubscribe(Genie.Requests.wtclient(), channel)
+    WebThreads.unsubscribe_disconnected_clients()
+
+    Dict("Unubscription" => "OK") |> Genie.Renderer.Json.json
+  end
+
+  nothing
+end
+
+
+function webthreads_push_pull(channel::String = Genie.config.webthreads_default_route) :: Nothing
+  Router.route("/$(channel)/$(Genie.config.webthreads_pull_route)", method = Router.POST) do
+    WebThreads.pull(Genie.Requests.wtclient(), channel)
+  end
+
+  Router.route("/$(channel)/$(Genie.config.webthreads_push_route)", method = Router.POST) do
+    WebThreads.push(Genie.Requests.wtclient(), channel, Router.@params(Genie.PARAMS_RAW_PAYLOAD))
+  end
+
+  nothing
+end
+
+
+"""
+    webthreads_support(channel = Genie.config.webthreads_default_route) :: String
+
+Provides full web channels support, setting up routes for loading support JS files, web sockets subscription and
+returning the `<script>` tag for including the linked JS file into the web page.
+"""
+function webthreads_support(channel::String = Genie.config.webthreads_default_route) :: String
+  endpoint = (channel == Genie.config.webthreads_default_route) ?
+              "/js/$(Genie.config.webthreads_js_file)" :
+              "/js/$(channel)/$(Genie.config.webthreads_js_file)"
+
+  Router.route(endpoint) do
+    Genie.Renderer.Js.js(webthreads(channel))
+  end
+
+  webthreads_subscribe(channel)
+  webthreads_push_pull(channel)
+
+  "<script src=\"$(Genie.config.base_path)$(endpoint[2:end])?v=$(Genie.Configuration.GENIE_VERSION)\"></script>"
+end
+
+
+#######
 
 
 """
@@ -173,7 +267,7 @@ function favicon_support() :: String
     )
   end
 
-  "<link rel=\"icon\" type=\"image/x-icon\" href=\"/favicon.ico\" />"
+  "<link rel=\"icon\" type=\"image/x-icon\" href=\"$(Genie.config.base_path)favicon.ico\" />"
 end
 
 end
