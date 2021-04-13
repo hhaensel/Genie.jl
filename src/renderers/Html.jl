@@ -82,7 +82,7 @@ function normal_element(children::Union{String,Vector{String}}, elem::Any, args:
     deleteat!(attrs, idx)
   end
 
-  ii = (x -> x isa Symbol && occursin("__", "$x")).(args)
+  ii = (x -> x isa Symbol && occursin(Genie.config.html_parser_char_dash, "$x")).(args)
   args[ii] .= Symbol.(replace.(string.(args[ii]), Ref(Genie.config.html_parser_char_dash=>"-")))
 
   elem = normalize_element(string(elem))
@@ -763,15 +763,17 @@ end
 
 
 """
-    register_svg_slements(; context = @__MODULE__) :: Nothing
+    register_svg_elements(; context = @__MODULE__) :: Nothing
 
 Sets up HTML tags for the SVG API.
 """
-function register_svg_slements(; context = @__MODULE__) :: Nothing
+function register_svg_elements(; context = @__MODULE__) :: Nothing
   for elem in SVG_ELEMENTS
     register_normal_element(elem)
   end
 end
+
+const register_svg_slements = register_svg_elements # todo: remove in v2
 
 
 """
